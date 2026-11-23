@@ -2851,6 +2851,18 @@ type AnchorNavigation = { kind: "hash" | "navigate"; url: string };
 
 // A click follows a link only when it lands on the link or inside it (HTML's activation behavior
 // runs on the event path), never on a nearby one.
+// HTML's "follow the hyperlink" downloads instead of navigating when the `download` attribute
+// targets a same-origin, `blob:`, or `data:` URL:
+// https://html.spec.whatwg.org/multipage/links.html#following-hyperlinks-2
+function isDownloadAnchor(anchor: AttributeTarget, resolved: string): boolean {
+  if (!anchor.hasAttribute("download")) return false;
+  if (resolved.startsWith("blob:") || resolved.startsWith("data:")) return true;
+  try {
+    return new URL(resolved).origin === new URL(state.pageUrl).origin;
+  } catch {
+    return false;
+  }
+}
 function activateAnchorNavigation(
   targetEl: MouseTarget,
   clientX: number,
@@ -2871,7 +2883,13 @@ function activateAnchorNavigation(
     ).toString();
     const isHashOnly =
       resolved.includes("#") && resolved.split("#")[0] === state.pageUrl.split("#")[0];
-    if (!isHashOnly) return { kind: "navigate", url: resolved };
+    if (!isHashOnly) {
+      // A `download` anchor saves a same-origin, blob: or data: target instead
+      // of navigating to it.
+      // https://html.spec.whatwg.org/multipage/links.html#downloading-resources
+      if (hasAttributeMethods(anchor) && isDownloadAnchor(anchor, resolved)) return null;
+      return { kind: "navigate", url: resolved };
+    }
     const previous = state.pageUrl;
     state.pageUrl = resolved;
     state.documentUrl = resolved;
