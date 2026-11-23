@@ -1122,14 +1122,14 @@
           "REPO_MAPPING:rules_rust+,bazel_tools bazel_tools",
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
           "FILE:@@+cargo_workspaces+cargo_ws_core//Cargo.lock e2e8e7a757415ded5f470e584c5e220a3b59356f05c90c1d740bdb61ca4ea6fe",
-          "FILE:@@+cargo_workspaces+cargo_ws_core//Cargo.toml 7c4138998c97a09d465b14b959a4e939237f31ea7821fedfeb2fc167025436e7",
-          "FILE:@@+cargo_workspaces+cargo_ws_core//patched.json 2b2ad9cc5fe8b55cb5a5a38a698188c8860f4041f0512c0a85db3b46e41d7adf",
+          "FILE:@@+cargo_workspaces+cargo_ws_core//Cargo.toml fc513c71216eb9d33857c2a1a2a6d40179c0addf0707652d9f61fb9a87c5f4ff",
+          "FILE:@@+cargo_workspaces+cargo_ws_core//patched.json c345a6a4e1ebebeab3cec1e7e4a1805a29b5b4302e5fa9612f8643cf0b439646",
           "FILE:@@+cargo_workspaces+cargo_ws_renderer//Cargo.lock a194b1cdc256e82653b679f974a3eb17364d51b0f8ead3da0c44a6c29ea93197",
-          "FILE:@@+cargo_workspaces+cargo_ws_renderer//Cargo.toml ec446489fd42d93aa6ca81fef3353c1869b666684fe983bbf5bd00ce9b3653d8",
-          "FILE:@@+cargo_workspaces+cargo_ws_renderer//patched.json 2b2ad9cc5fe8b55cb5a5a38a698188c8860f4041f0512c0a85db3b46e41d7adf",
+          "FILE:@@+cargo_workspaces+cargo_ws_renderer//Cargo.toml 3f7ed0dd858f30a7faa705d3f268545c4a327fe1e45ee511e59b9bbea511591e",
+          "FILE:@@+cargo_workspaces+cargo_ws_renderer//patched.json c345a6a4e1ebebeab3cec1e7e4a1805a29b5b4302e5fa9612f8643cf0b439646",
           "FILE:@@+cargo_workspaces+cargo_ws_scene_host//Cargo.lock f9fadaf9329edad78625aebe86ecc9121ea3787527223004e571caf920554878",
-          "FILE:@@+cargo_workspaces+cargo_ws_scene_host//Cargo.toml 058c200c71fd11eb3a6ebe5e91cba118b970bfa73d02066da79f2182b4f84943",
-          "FILE:@@+cargo_workspaces+cargo_ws_scene_host//patched.json 2b2ad9cc5fe8b55cb5a5a38a698188c8860f4041f0512c0a85db3b46e41d7adf",
+          "FILE:@@+cargo_workspaces+cargo_ws_scene_host//Cargo.toml 0e848ca9b806c4864a9e5c8b6b466d9115e03c6c392969750e50ef2cfff285b4",
+          "FILE:@@+cargo_workspaces+cargo_ws_scene_host//patched.json c345a6a4e1ebebeab3cec1e7e4a1805a29b5b4302e5fa9612f8643cf0b439646",
           "FILE:@@+cargo_workspaces+cargo_ws_memprof//Cargo.lock 700ce60a085805e81be18248290fa55c12fd753835006ab68256b8f397261384",
           "FILE:@@+cargo_workspaces+cargo_ws_memprof//Cargo.toml 6982e34060f201166856e8294a4c4a42cd957eb79df82f72f536b5318e6244b8",
           "FILE:@@//packages/kitesurf-cli/Cargo.lock 152fed308b4920eadd2828ba02d0dda6109d0a733cba973a78a25394334fd143",
@@ -1629,7 +1629,11 @@
                 "@@//scripts:patches/blitz-dom-0.3.0-beta.4/0096-Let-the-embedder-take-an-author-font-family-from-its.patch",
                 "@@//scripts:patches/blitz-dom-0.3.0-beta.4/0097-Keep-boxes-beside-floats-or-holding-floats-out-of-th.patch",
                 "@@//scripts:patches/blitz-dom-0.3.0-beta.4/0098-Let-a-cell-s-width-size-its-column-not-hold-the-tabl.patch",
-                "@@//scripts:patches/blitz-dom-0.3.0-beta.4/0099-Queue-font-face-rules-from-style-elements.patch"
+                "@@//scripts:patches/blitz-dom-0.3.0-beta.4/0099-Queue-font-face-rules-from-style-elements.patch",
+                "@@//scripts:patches/blitz-dom-0.3.0-beta.4/0100-Keep-clip-path-points-out-of-hit-testing.patch",
+                "@@//scripts:patches/blitz-dom-0.3.0-beta.4/0101-Record-inline-margin-offsets-with-the-inline-layout.patch",
+                "@@//scripts:patches/blitz-dom-0.3.0-beta.4/0102-Project-non-perspective-3d-transforms-onto-the-plane.patch",
+                "@@//scripts:patches/blitz-dom-0.3.0-beta.4/0103-Stretch-auto-width-block-boxes-inside-inline-formatt.patch"
               ],
               "remote_patch_strip": 1,
               "sha256": "a814bfd3ad19e6d8d26f99c75188062baca499564f9abe44250230962427d183",
@@ -1706,7 +1710,8 @@
                 "@@//scripts:patches/blitz-paint-0.3.0-beta.4/0032-Read-box-child-lists-through-node-accessors.patch",
                 "@@//scripts:patches/blitz-paint-0.3.0-beta.4/0033-Shape-outside-list-markers-when-painted.patch",
                 "@@//scripts:patches/blitz-paint-0.3.0-beta.4/0034-Read-packed-node-storage-through-accessors.patch",
-                "@@//scripts:patches/blitz-paint-0.3.0-beta.4/0035-Give-text-layer-scenes-each-glyph-run-s-source-text.patch"
+                "@@//scripts:patches/blitz-paint-0.3.0-beta.4/0035-Give-text-layer-scenes-each-glyph-run-s-source-text.patch",
+                "@@//scripts:patches/blitz-paint-0.3.0-beta.4/0036-Draw-inline-text-at-its-margin-offset.patch"
               ],
               "remote_patch_strip": 1,
               "sha256": "28803328124d7b7ea5f8f41501513ccb005559e9f6baf33fa0c1fb7612654a93",
@@ -5450,7 +5455,8 @@
                 "@@//scripts:patches/taffy-0.15.0/0009-Commit-block-children-s-layouts-as-they-are-laid-out.patch",
                 "@@//scripts:patches/taffy-0.15.0/0010-Reserve-a-block-s-item-list-for-all-its-children.patch",
                 "@@//scripts:patches/taffy-0.15.0/0011-Store-a-cached-layout-s-positioning-area-out-of-line.patch",
-                "@@//scripts:patches/taffy-0.15.0/0012-Share-a-table-s-spare-width-between-columns-in-propo.patch"
+                "@@//scripts:patches/taffy-0.15.0/0012-Share-a-table-s-spare-width-between-columns-in-propo.patch",
+                "@@//scripts:patches/taffy-0.15.0/0013-Apply-relative-positioning-insets-to-block-context-f.patch"
               ],
               "remote_patch_strip": 1,
               "sha256": "3c8480887e8803986d96a7173729565520d4bbb721ad6b7ad6941a22897207aa",
