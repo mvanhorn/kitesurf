@@ -6,6 +6,7 @@
 
 use std::panic;
 
+use blitz_dom::node::ChildIds;
 use blitz_dom::{local_name, ns, BaseDocument, LocalName, Namespace, Node, NodeData};
 use blitz_traits::NodeId;
 use ::style::context::QuirksMode;
@@ -259,6 +260,34 @@ enum HtmlForm {
 struct HtmlContext<'a> {
     doc: &'a BaseDocument,
     form: HtmlForm,
+    templates: &'a TemplateContents,
+}
+
+pub(crate) type TemplateContents = std::collections::HashMap<NodeId, NodeId>;
+
+/// The children to write for `node`: a moved template's content, or none for a template this
+/// walk already entered (in `entered`), which means the content holds its own template.
+pub(crate) fn serialized_children<'a>(
+    doc: &'a BaseDocument,
+    templates: &TemplateContents,
+    node: &'a Node,
+    entered: &mut Vec<NodeId>,
+) -> Option<ChildIds<'a>> {
+    let is_template = || {
+        node.element_data()
+            .is_some_and(|data| data.name.local == local_name!("template"))
+    };
+    if templates.is_empty() || !is_template() {
+        return Some(node.children());
+    }
+    let Some(contents) = templates.get(&node.id()).and_then(|&id| doc.get_node(id)) else {
+        return Some(node.children());
+    };
+    if entered.contains(&node.id()) {
+        return None;
+    }
+    entered.push(node.id());
+    Some(contents.children())
 }
 
 /// Serializer output. A [`ByteCount`] pass sizes the `String` exactly, because growing a
@@ -296,14 +325,15 @@ impl HtmlSink for ByteCount {
 
 /// `outerHTML` of `node`; a document serializes its children.
 fn write_node_outer_html<'a, S: HtmlSink>(cx: HtmlContext<'a>, node: &'a Node, out: &mut S) {
+    let mut entered = Vec::new();
     if matches!(node.data, NodeData::Document(_)) {
         for cid in node.children() {
             if let Some(c) = cx.doc.get_node(cid) {
-                write_outer_html(cx, c, out);
+                write_outer_html(cx, c, out, &mut entered);
             }
         }
     } else {
-        write_outer_html(cx, node, out);
+        write_outer_html(cx, node, out, &mut entered);
     }
 }
 
@@ -312,14 +342,18 @@ fn write_inner_html<'a, S: HtmlSink>(cx: HtmlContext<'a>, node: &'a Node, out: &
         NodeData::Element(data) => is_raw_text_element(&data.name.local),
         _ => false,
     };
-    for cid in node.children() {
+    let mut entered = Vec::new();
+    let Some(children) = serialized_children(cx.doc, cx.templates, node, &mut entered) else {
+        return;
+    };
+    for cid in children {
         if let Some(c) = cx.doc.get_node(cid) {
             if raw_text {
                 if let NodeData::Text(t) = &c.data {
                     out.push_str(&t.content);
                 }
             } else {
-                write_outer_html(cx, c, out);
+                write_outer_html(cx, c, out, &mut entered);
             }
         }
     }
@@ -402,11 +436,16 @@ fn is_js_whitespace(ch: char) -> bool {
 }
 
 // An explicit stack, not recursion: a deeply nested DOM overflowed the wasm call stack.
-fn write_outer_html<'a, S: HtmlSink>(cx: HtmlContext<'a>, node: &'a Node, out: &mut S) {
+fn write_outer_html<'a, S: HtmlSink>(
+    cx: HtmlContext<'a>,
+    node: &'a Node,
+    out: &mut S,
+    entered: &mut Vec<NodeId>,
+) {
     let mut stack = vec![SerializeStep::Open(node)];
     while let Some(step) = stack.pop() {
         match step {
-            SerializeStep::Open(node) => write_node_open(cx, node, out, &mut stack),
+            SerializeStep::Open(node) => write_node_open(cx, node, out, &mut stack, entered),
             SerializeStep::Close(local) => {
                 out.push_str("</");
                 out.push_str(local);
@@ -416,8 +455,12 @@ fn write_outer_html<'a, S: HtmlSink>(cx: HtmlContext<'a>, node: &'a Node, out: &
     }
 }
 
-fn push_children<'a>(doc: &'a BaseDocument, node: &'a Node, stack: &mut impl StepStack<'a>) {
-    for cid in node.children().iter().rev() {
+fn push_children<'a>(
+    doc: &'a BaseDocument,
+    children: ChildIds<'a>,
+    stack: &mut impl StepStack<'a>,
+) {
+    for cid in children.iter().rev() {
         if let Some(c) = doc.get_node(cid) {
             stack.open(c);
         }
@@ -429,11 +472,14 @@ fn write_node_open<'a, S: HtmlSink>(
     node: &'a Node,
     out: &mut S,
     stack: &mut impl StepStack<'a>,
+    entered: &mut Vec<NodeId>,
 ) {
     use blitz_dom::node::{Attribute, SpecialElementData};
     let doc = cx.doc;
     match &node.data {
-        NodeData::Document(_) | NodeData::ShadowRoot(_) => push_children(doc, node, stack),
+        NodeData::Document(_) | NodeData::ShadowRoot(_) => {
+            push_children(doc, node.children(), stack)
+        }
         NodeData::Comment { contents } => {
             out.push_str("<!--");
             out.push_str(contents);
@@ -493,8 +539,8 @@ fn write_node_open<'a, S: HtmlSink>(
                     };
                     out.push_str(&text.content);
                 }
-            } else {
-                push_children(doc, node, stack);
+            } else if let Some(children) = serialized_children(doc, cx.templates, node, entered) {
+                push_children(doc, children, stack);
             }
         }
     }
@@ -770,11 +816,14 @@ pub struct OuterHtmlStream {
     len: usize,
     emitted: usize,
     torn: bool,
+    // The templates whose content this walk has entered, kept across pulls so the stream makes the
+    // same choices as the one-pass serialization.
+    entered: Vec<NodeId>,
 }
 
 impl OuterHtmlStream {
     /// Runs serialization steps until `max` bytes are pending or the tree is done.
-    fn fill(&mut self, doc: &BaseDocument, max: usize) {
+    fn fill(&mut self, doc: &BaseDocument, templates: &TemplateContents, max: usize) {
         while self.sink.unread() < max {
             let Some(step) = self.stack.pop() else {
                 return;
@@ -785,8 +834,10 @@ impl OuterHtmlStream {
                         let cx = HtmlContext {
                             doc,
                             form: HtmlForm::Markup,
+                            templates,
                         };
-                        write_node_open(cx, node, &mut self.sink, &mut self.stack)
+                        let (sink, stack) = (&mut self.sink, &mut self.stack);
+                        write_node_open(cx, node, sink, stack, &mut self.entered)
                     }
                     None => {
                         self.torn = true;
@@ -829,11 +880,12 @@ impl OuterHtmlStream {
         let Ok(doc) = dom.doc.try_borrow() else {
             return self.tear();
         };
-        self.fill(&doc, want);
+        let templates = dom.template_contents.borrow();
+        self.fill(&doc, &templates, want);
         let last = want == remaining;
         if last {
             // One byte past the end shows whether the tree now serializes longer.
-            self.fill(&doc, want + 1);
+            self.fill(&doc, &templates, want + 1);
         }
         drop(doc);
         let n = want.min(self.sink.unread());
@@ -886,9 +938,11 @@ impl DomHandle {
         // First pass: the output's length, keyed hash, first marker offset and its start.
         let key = output_hash_key().ok()?;
         let mut probe = Probe::new(marker, key);
+        let templates = self.template_contents.borrow();
         let cx = HtmlContext {
             doc: &doc,
             form: HtmlForm::Markup,
+            templates: &templates,
         };
         write_node_outer_html(cx, node, &mut probe);
         drop(doc);
@@ -912,6 +966,7 @@ impl DomHandle {
             len,
             emitted: 0,
             torn: false,
+            entered: Vec::new(),
         })
     }
 }
@@ -1300,9 +1355,11 @@ impl DomHandle {
         let Some(n) = doc.get_node(internal_id) else {
             return String::new();
         };
+        let templates = self.template_contents.borrow();
         let cx = HtmlContext {
             doc: &doc,
             form: HtmlForm::Markup,
+            templates: &templates,
         };
         serialize_exact(cx, n, write_node_outer_html, write_node_outer_html, 0)
     }
@@ -1321,9 +1378,11 @@ impl DomHandle {
         let Some(n) = doc.get_node(internal_id) else {
             return String::new();
         };
+        let templates = self.template_contents.borrow();
         let cx = HtmlContext {
             doc: &doc,
             form: HtmlForm::Snapshot,
+            templates: &templates,
         };
         serialize_exact(cx, n, write_node_outer_html, write_node_outer_html, 0)
     }
@@ -1347,9 +1406,11 @@ impl DomHandle {
         let Some(n) = doc.get_node(internal_id) else {
             return Vec::new();
         };
+        let templates = self.template_contents.borrow();
         let cx = HtmlContext {
             doc: &doc,
             form: HtmlForm::Markup,
+            templates: &templates,
         };
         let mut out = serialize_exact(
             cx,
@@ -1382,9 +1443,11 @@ impl DomHandle {
         let Some(node) = doc.get_node(internal_id) else {
             return String::new();
         };
+        let templates = self.template_contents.borrow();
         let cx = HtmlContext {
             doc: &doc,
             form: HtmlForm::Markup,
+            templates: &templates,
         };
         serialize_exact(cx, node, write_inner_html, write_inner_html, 0)
     }
