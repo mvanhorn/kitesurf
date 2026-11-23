@@ -140,10 +140,15 @@ export function discoverFontFaces(): void {
   }
 }
 
-/** `document.fonts.load()`: fetch every declared face, not only the ones the styles use. */
-export function loadAllFontFaces(): void {
+/** `document.fonts.load(font, text)`: fetch the pending faces matching the request. */
+export function loadFontFaces(request: {
+  families: string[];
+  italic: boolean;
+  weight: number;
+  text: string;
+}): void {
   try {
-    ensurePaintDom()?.loadAllFontFaces();
+    ensurePaintDom()?.loadFontFaces(request.families, request.italic, request.weight, request.text);
   } catch {
     invalidatePaintDom();
   }
