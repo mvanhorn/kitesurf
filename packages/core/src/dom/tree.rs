@@ -247,6 +247,20 @@ impl<'a> StepStack<'a> for Vec<StreamStep> {
     }
 }
 
+// `Markup` is what outerHTML returns: the attributes as they are. `Snapshot` also carries the
+// checkedness a script or a click set, for a reader that parses the text into a new document.
+#[derive(Clone, Copy, PartialEq)]
+enum HtmlForm {
+    Markup,
+    Snapshot,
+}
+
+#[derive(Clone, Copy)]
+struct HtmlContext<'a> {
+    doc: &'a BaseDocument,
+    form: HtmlForm,
+}
+
 /// Serializer output. A [`ByteCount`] pass sizes the `String` exactly, because growing a
 /// document-sized `String` by doubling raised the Wasm high-water mark by about twice its size.
 trait HtmlSink {
@@ -281,31 +295,31 @@ impl HtmlSink for ByteCount {
 }
 
 /// `outerHTML` of `node`; a document serializes its children.
-fn write_node_outer_html<S: HtmlSink>(doc: &BaseDocument, node: &Node, out: &mut S) {
+fn write_node_outer_html<'a, S: HtmlSink>(cx: HtmlContext<'a>, node: &'a Node, out: &mut S) {
     if matches!(node.data, NodeData::Document(_)) {
         for cid in node.children() {
-            if let Some(c) = doc.get_node(cid) {
-                write_outer_html(doc, c, out);
+            if let Some(c) = cx.doc.get_node(cid) {
+                write_outer_html(cx, c, out);
             }
         }
     } else {
-        write_outer_html(doc, node, out);
+        write_outer_html(cx, node, out);
     }
 }
 
-fn write_inner_html<S: HtmlSink>(doc: &BaseDocument, node: &Node, out: &mut S) {
+fn write_inner_html<'a, S: HtmlSink>(cx: HtmlContext<'a>, node: &'a Node, out: &mut S) {
     let raw_text = match &node.data {
         NodeData::Element(data) => is_raw_text_element(&data.name.local),
         _ => false,
     };
     for cid in node.children() {
-        if let Some(c) = doc.get_node(cid) {
+        if let Some(c) = cx.doc.get_node(cid) {
             if raw_text {
                 if let NodeData::Text(t) = &c.data {
                     out.push_str(&t.content);
                 }
             } else {
-                write_outer_html(doc, c, out);
+                write_outer_html(cx, c, out);
             }
         }
     }
@@ -313,17 +327,17 @@ fn write_inner_html<S: HtmlSink>(doc: &BaseDocument, node: &Node, out: &mut S) {
 
 /// Runs the same writer twice: once to count bytes, then into a `String` with that capacity
 /// plus `spare` bytes.
-fn serialize_exact(
-    doc: &BaseDocument,
-    node: &Node,
-    count: fn(&BaseDocument, &Node, &mut ByteCount),
-    write: fn(&BaseDocument, &Node, &mut String),
+fn serialize_exact<'a>(
+    cx: HtmlContext<'a>,
+    node: &'a Node,
+    count: fn(HtmlContext<'a>, &'a Node, &mut ByteCount),
+    write: fn(HtmlContext<'a>, &'a Node, &mut String),
     spare: usize,
 ) -> String {
     let mut bytes = ByteCount(0);
-    count(doc, node, &mut bytes);
+    count(cx, node, &mut bytes);
     let mut out = String::with_capacity(bytes.0 + spare);
-    write(doc, node, &mut out);
+    write(cx, node, &mut out);
     debug_assert_eq!(out.len(), bytes.0);
     out
 }
@@ -388,11 +402,11 @@ fn is_js_whitespace(ch: char) -> bool {
 }
 
 // An explicit stack, not recursion: a deeply nested DOM overflowed the wasm call stack.
-fn write_outer_html<S: HtmlSink>(doc: &BaseDocument, node: &Node, out: &mut S) {
+fn write_outer_html<'a, S: HtmlSink>(cx: HtmlContext<'a>, node: &'a Node, out: &mut S) {
     let mut stack = vec![SerializeStep::Open(node)];
     while let Some(step) = stack.pop() {
         match step {
-            SerializeStep::Open(node) => write_node_open(doc, node, out, &mut stack),
+            SerializeStep::Open(node) => write_node_open(cx, node, out, &mut stack),
             SerializeStep::Close(local) => {
                 out.push_str("</");
                 out.push_str(local);
@@ -411,12 +425,13 @@ fn push_children<'a>(doc: &'a BaseDocument, node: &'a Node, stack: &mut impl Ste
 }
 
 fn write_node_open<'a, S: HtmlSink>(
-    doc: &'a BaseDocument,
+    cx: HtmlContext<'a>,
     node: &'a Node,
     out: &mut S,
     stack: &mut impl StepStack<'a>,
 ) {
     use blitz_dom::node::{Attribute, SpecialElementData};
+    let doc = cx.doc;
     match &node.data {
         NodeData::Document(_) | NodeData::ShadowRoot(_) => push_children(doc, node, stack),
         NodeData::Comment { contents } => {
@@ -431,20 +446,21 @@ fn write_node_open<'a, S: HtmlSink>(
             let local: &str = &data.name.local;
             out.push('<');
             out.push_str(local);
-            let mut emit_synth_checked = false;
-            let mut suppress_attr_checked = false;
-            if let SpecialElementData::CheckboxInput(true) = data.special_data() {
-                emit_synth_checked = true;
-                suppress_attr_checked = true;
-            } else if let SpecialElementData::CheckboxInput(false) = data.special_data() {
-                suppress_attr_checked = true;
-            }
-            if emit_synth_checked {
+            // Checkedness lives outside the attributes, so a snapshot writes it as one and
+            // drops the attribute it replaces; outerHTML never reflects it, as in a browser.
+            let live_checked = match cx.form {
+                HtmlForm::Markup => None,
+                HtmlForm::Snapshot => match data.special_data() {
+                    SpecialElementData::CheckboxInput(checked) => Some(*checked),
+                    _ => None,
+                },
+            };
+            if live_checked == Some(true) {
                 out.push_str(" checked=\"\"");
             }
             for attr in data.attrs.iter() {
                 let Attribute { name, value, .. } = attr;
-                if suppress_attr_checked && &*name.local == "checked" {
+                if live_checked.is_some() && &*name.local == "checked" {
                     continue;
                 }
                 out.push(' ');
@@ -765,7 +781,13 @@ impl OuterHtmlStream {
             };
             match step {
                 StreamStep::Open(id) => match doc.get_node(id) {
-                    Some(node) => write_node_open(doc, node, &mut self.sink, &mut self.stack),
+                    Some(node) => {
+                        let cx = HtmlContext {
+                            doc,
+                            form: HtmlForm::Markup,
+                        };
+                        write_node_open(cx, node, &mut self.sink, &mut self.stack)
+                    }
                     None => {
                         self.torn = true;
                         return;
@@ -864,7 +886,11 @@ impl DomHandle {
         // First pass: the output's length, keyed hash, first marker offset and its start.
         let key = output_hash_key().ok()?;
         let mut probe = Probe::new(marker, key);
-        write_node_outer_html(&doc, node, &mut probe);
+        let cx = HtmlContext {
+            doc: &doc,
+            form: HtmlForm::Markup,
+        };
+        write_node_outer_html(cx, node, &mut probe);
         drop(doc);
 
         let (at, cut, insert) = marker_edit(&probe, marker, doctype)?;
@@ -1274,7 +1300,32 @@ impl DomHandle {
         let Some(n) = doc.get_node(internal_id) else {
             return String::new();
         };
-        serialize_exact(&doc, n, write_node_outer_html, write_node_outer_html, 0)
+        let cx = HtmlContext {
+            doc: &doc,
+            form: HtmlForm::Markup,
+        };
+        serialize_exact(cx, n, write_node_outer_html, write_node_outer_html, 0)
+    }
+
+    /// The node as markup that also carries live checkedness, for a caller that parses it
+    /// into a new document; outerHTML is what the page and a CDP client see.
+    #[wasm_bindgen(js_name = "snapshotHTML")]
+    pub fn snapshot_html(&self, node_id: u32) -> String {
+        let Some(internal_id) = self.resolve_node_id(node_id) else {
+            return String::new();
+        };
+        let doc = match self.doc.try_borrow() {
+            Ok(d) => d,
+            Err(_) => return String::new(),
+        };
+        let Some(n) = doc.get_node(internal_id) else {
+            return String::new();
+        };
+        let cx = HtmlContext {
+            doc: &doc,
+            form: HtmlForm::Snapshot,
+        };
+        serialize_exact(cx, n, write_node_outer_html, write_node_outer_html, 0)
     }
 
     /// `outerHTML` as UTF-8 that JS reads in chunks, so the page never holds a whole copy.
@@ -1296,8 +1347,12 @@ impl DomHandle {
         let Some(n) = doc.get_node(internal_id) else {
             return Vec::new();
         };
+        let cx = HtmlContext {
+            doc: &doc,
+            form: HtmlForm::Markup,
+        };
         let mut out = serialize_exact(
-            &doc,
+            cx,
             n,
             write_node_outer_html,
             write_node_outer_html,
@@ -1327,7 +1382,11 @@ impl DomHandle {
         let Some(node) = doc.get_node(internal_id) else {
             return String::new();
         };
-        serialize_exact(&doc, node, write_inner_html, write_inner_html, 0)
+        let cx = HtmlContext {
+            doc: &doc,
+            form: HtmlForm::Markup,
+        };
+        serialize_exact(cx, node, write_inner_html, write_inner_html, 0)
     }
 
     #[wasm_bindgen(js_name = "textContent")]
