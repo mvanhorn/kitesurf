@@ -365,7 +365,7 @@ export interface QueryDomMethods {
     };
   };
   setMediaType: {
-    args: { media: string; quiet?: boolean };
+    args: { media: string; quiet?: boolean; darkColorScheme?: boolean };
     result: { ok?: boolean; media?: "screen" | "print"; changed?: boolean; error?: string };
   };
   setLayoutMode: {
