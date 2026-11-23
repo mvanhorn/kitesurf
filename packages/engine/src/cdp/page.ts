@@ -465,6 +465,20 @@ function assertScreenshotRasterLimits(
   }
 }
 
+async function saveCurrentHistoryScroll(ctx: DispatchCtx, target: TargetState): Promise<void> {
+  const current = target.navigationHistory[target.navigationHistoryIndex];
+  if (!current) return;
+  try {
+    const metrics = await sessionOf(ctx, target).callIfLive.layoutMetrics({});
+    if (metrics) {
+      target.navigationHistoryScroll.set(current.id, {
+        x: metrics.scrollX,
+        y: metrics.scrollY,
+      });
+    }
+  } catch {}
+}
+
 function recordNavigationHistory(target: TargetState, url: string, transitionType: string): void {
   if (transitionType === "back_forward") return;
   if (transitionType === "reload") {
@@ -479,6 +493,9 @@ function recordNavigationHistory(target: TargetState, url: string, transitionTyp
   if (outgoing) outgoing.title = target.title;
 
   if (target.navigationHistoryIndex < target.navigationHistory.length - 1) {
+    for (let i = target.navigationHistoryIndex + 1; i < target.navigationHistory.length; i++) {
+      target.navigationHistoryScroll.delete(target.navigationHistory[i]!.id);
+    }
     target.navigationHistory.length = target.navigationHistoryIndex + 1;
   }
   const tt = isNavigationTransitionType(transitionType) ? transitionType : "other";
@@ -712,6 +729,7 @@ export async function handlePage(
         throw new Error(`Page.navigateToHistoryEntry: no entry with id ${entryId}`);
       }
       if (newIndex === target.navigationHistoryIndex) return {};
+      await saveCurrentHistoryScroll(ctx, target);
       const dest = target.navigationHistory[newIndex]!;
       target.navigationHistoryIndex = newIndex;
       const navReq = {
@@ -724,6 +742,17 @@ export async function handlePage(
         },
       } satisfies InternalHistoryNavigateRequest;
       await handlePage(ctx, navReq);
+      // Restore the saved scroll position when history.scrollRestoration is "auto".
+      // https://html.spec.whatwg.org/multipage/nav-history-apis.html#restore-persisted-state
+      const saved = target.navigationHistoryScroll.get(dest.id);
+      if (saved && (saved.x > 0 || saved.y > 0) && target.pageScript) {
+        try {
+          await target.pageScript.evaluate(
+            `if (typeof history === "undefined" || history.scrollRestoration !== "manual") { window.scrollTo(${saved.x}, ${saved.y}); }`,
+            {},
+          );
+        } catch {}
+      }
       return {};
     }
 
@@ -773,6 +802,12 @@ export async function handlePage(
         } catch {
           throw new Error("Cannot navigate to invalid URL");
         }
+      }
+      if (
+        req.params?.transitionType !== "back_forward" &&
+        req.params?.transitionType !== "reload"
+      ) {
+        await saveCurrentHistoryScroll(ctx, target);
       }
       // Abort the previous signal so its redirect walk and egress request can stop.
       target.pendingNavAbort?.abort();
