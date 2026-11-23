@@ -333,3 +333,40 @@ fn is_pseudo_sibling_in_has_updates_on_middle_removal() {
         );
     }
 }
+
+#[test]
+fn non_subject_has_adjacent_sibling_updates_on_insert_between() {
+    // The anchor is not the subject here: `.y` is. Re-matching the anchor alone leaves `.y`
+    // with the style from the previous match, because nothing reaches it.
+    let html = r#"<!doctype html><style>
+        .y { color: rgb(0, 128, 0); }
+        .p:has(> .a + .b) .y { color: rgb(255, 0, 0); }
+    </style>
+    <div class="p"><i class="y" id="y"></i><span class="a"></span><span class="b" id="b"></span></div>"#;
+    let dom = DomHandle::new(html, "https://example.test/");
+    dom.set_viewport(800, 600);
+    dom.resolve_layout();
+
+    assert_eq!(color(&dom, "#y"), "rgb(255, 0, 0)");
+    let spacer = dom.create_element("span");
+    assert!(dom.insert_before_node(id(&dom, ".p"), spacer, id(&dom, "#b")));
+    assert_eq!(color(&dom, "#y"), "rgb(0, 128, 0)");
+}
+
+#[test]
+fn non_subject_has_descendant_adjacent_sibling_updates_on_insert_between() {
+    // Same, with the anchor above the inserted node's parent (`.p:has(.a + .b) .y`).
+    let html = r#"<!doctype html><style>
+        .y { color: rgb(0, 128, 0); }
+        .p:has(.a + .b) .y { color: rgb(255, 0, 0); }
+    </style>
+    <div class="p"><div class="w"><i class="y" id="y"></i><span class="a"></span><span class="b" id="b"></span></div></div>"#;
+    let dom = DomHandle::new(html, "https://example.test/");
+    dom.set_viewport(800, 600);
+    dom.resolve_layout();
+
+    assert_eq!(color(&dom, "#y"), "rgb(255, 0, 0)");
+    let spacer = dom.create_element("span");
+    assert!(dom.insert_before_node(id(&dom, ".w"), spacer, id(&dom, "#b")));
+    assert_eq!(color(&dom, "#y"), "rgb(0, 128, 0)");
+}
